@@ -1,0 +1,123 @@
+Research
+What are weights and gradients 
+Weights
+A weight is a number inside the network that gets learned during training. It's the network's "knowledge" stored as numbers.
+In a CNN, weights are the values inside the convolutional filters (kernels). For example, a 3×3 filter has 9 weights. During training, those 9 numbers get adjusted so the filter learns to detect something useful — an edge, a curve, a texture.
+	Gradients
+A gradient is the answer to the question: "If I nudge this weight slightly, how much does the loss (error) change?"
+More precisely, it's the partial derivative of the loss with respect to a weight:
+gradient = ∂Loss / ∂weight
+
+Fine-tuning vs. feature extraction vs. training from scratch — when to use each
+1. Training from Scratch
+You initialize all weights randomly and train the entire network on your own dataset.
+How it works: Every layer — from early edge detectors to high-level feature maps — learns entirely from your data.
+When to use:
+
+You have a very large, domain-specific dataset (millions of images)
+Your data is very different from ImageNet (e.g., satellite imagery, medical scans, microscopy)
+You need full control over every architectural decision
+Computational resources are not a constraint
+
+Drawbacks: Extremely data-hungry, slow, and expensive. Rarely necessary for most real-world tasks.
+
+2. Feature Extraction
+You take a pretrained CNN (e.g., ResNet, VGG, EfficientNet trained on ImageNet), freeze all its weights, remove the final classification head, and add a new classifier on top that you train on your data.
+[Pretrained Conv Layers — FROZEN] → [New Dense Layers — TRAINED]
+When to use:
+
+Your dataset is small (hundreds to low thousands of images)
+Your data is similar to what the pretrained model was trained on
+You have limited compute or time
+You want a fast baseline
+
+Why it works: Early CNN layers learn universal features (edges, textures, shapes) that transfer broadly across visual domains.
+
+3. Fine-Tuning
+You start with a pretrained CNN, keep its weights as initialization, then unfreeze some or all layers and continue training on your dataset — usually with a low learning rate.
+Common strategy — progressive unfreezing:
+Phase 1: Freeze all conv layers → train new head
+Phase 2: Unfreeze last N conv blocks → train with small LR
+Phase 3: (Optional) Unfreeze entire network → very small LR
+When to use:
+
+You have a moderate to large dataset
+Your domain is somewhat different from the pretrained model's data
+You want higher accuracy than feature extraction alone
+You have enough compute for longer training
+
+Key risk: Fine-tuning with too large a learning rate or too little data causes catastrophic forgetting — the pretrained weights are destroyed.
+
+ What "freezing" means in code and what happens during backpropagation when layers are frozen 
+ Freezing a layer means setting its parameters to not require gradients.
+
+What Actually Happens During Backpropagation
+To understand this, recall the two phases of training:
+Forward pass — data flows through every layer, frozen or not, producing a prediction and a loss. Frozen layers participate fully here.
+Backward pass — gradients flow backwards through the network via the chain rule.
+Here's where freezing matters:
+Loss
+  ↓  gradient flows back
+Layer 4  (trainable) → gradient computed → weights UPDATED
+  ↓
+Layer 3  (trainable) → gradient computed → weights UPDATED
+  ↓
+Layer 2  (FROZEN)    → gradient computed → weights NOT updated
+  ↓
+Layer 1  (FROZEN)    → gradient computed → weights NOT updated
+
+There are two distinct things happening in each layer during backprop:
+Compute gradient w.r.t. inputs (to pass backward)
+Compute gradient w.r.t. weights (to update them) is Skipped
+The gradient still passes through a frozen layer — it just doesn't update that layer's weights.
+
+The Memory/Speed Optimization: torch.no_grad() context
+In PyTorch, even with requires_grad=False, gradients can still be computed for frozen layers if PyTorch needs to pass them backward. You can eliminate this entirely during feature extraction 
+A Concrete Mental Model
+Think of the network as a chain of workers passing a ball (gradient) backwards:
+Trainable worker: catches the ball, uses it to adjust their technique (weight update), then passes it to the next worker behind them
+Frozen worker: catches the ball, passes it backward — but does not adjust their technique
+The ball still travels the full chain. The frozen workers just don't learn from it.
+If you accidentally pass frozen parameters to the optimizer, it wastes memory tracking them and may throw errors. 
+
+Teach one concept
+Quick terms 
+Classification head
+A classification head is the final part of a neural network that takes the extracted features and converts them into class predictions. It's called a "head" because it sits at the end — on top of the feature-extracting "backbone." aka the final decision layer
+Feature extraction 
+You take a pretrained CNN (e.g., ResNet, VGG, EfficientNet trained on ImageNet), freeze all its weights, remove the final classification head, and add a new classifier on top that you train on your data.
+Why feature extraction
+Your dataset is small (hundreds to low thousands of images)
+Your data is similar to what the pretrained model was trained on
+You have limited compute or time
+You want a fast baseline
+Gradient 
+is the answer to the question: "If I nudge this weight slightly, how much does the loss (error) change?" or a signal to the optimizer on how much the weight change altered the loss 
+
+
+
+
+Freezing weights
+Main Question 
+What is “freezing weights” and how does the model still learn if the weights are frozen?
+Freezing weights 
+setting its parameters to not require gradients.
+Why 
+The pretrained model already knows how to detect useful visual features — edges, textures, shapes — learned from millions of images. When your new dataset is much smaller. If you let the gradients flow back through the model, those small-data gradients would overwrite that rich pretrained knowledge with noisy updates, which is catastrophic forgetting. You'd destroy more than you'd gain. 
+Freezing works because 
+The optimizer updates weights using this formula:
+(new_weight = old_weight - (learning_rate × gradient))
+So if the gradient is disabled it would be:
+new_weight = old_weight - (learning_rate x 0)
+Or:
+new_weight = old_weight
+Or: 
+No change
+
+So how does the model learn if the weights are frozen?
+the pretrained conv layers (e.g., from VGG, ResNet, EfficientNet) act as a fixed feature extractor. They transform input images into a rich feature vector (e.g., 7×7×512) using filters already tuned to detect edges, textures, shapes, and higher-level patterns from ImageNet training. Their weights don't change at all — gradients are computed but discarded
+The learning flow
+Forward pass: image → frozen conv base → feature vector → your new head → prediction
+Loss is computed against your new labels
+Backprop flows through the head layers, updating their weights
+Gradients stop (or are ignored) at the frozen boundary

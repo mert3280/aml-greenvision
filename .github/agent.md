@@ -48,7 +48,7 @@ The values `mean=[0.485, 0.456, 0.406]` and `std=[0.229, 0.224, 0.225]` are fixe
 Do not replace them with PlantVillage-computed statistics, do not "optimize" them, do not omit them. A wrong normalization silently degrades accuracy with no error.
 
 ### ❌ Never modify the class names artifact structure
-The file `artifacts/class_names.json` is a list of 38 strings in the exact order `ImageFolder` assigned during training. Do not:
+The file `artifacts/class_names.json` is a list of 39 strings in the exact order `ImageFolder` assigned during training (38 crop conditions plus `Background_without_leaves`, D-17b). Do not:
 - Reorder entries
 - Rename entries (e.g., normalize underscores or case)
 - Add or remove entries
@@ -66,15 +66,15 @@ Phase 1 (frozen backbone) must run before Phase 2 (full fine-tuning). Do not:
 ### ❌ Never remove error handling
 Do not delete or stub out:
 - `FileNotFoundError` checks on checkpoint and artifact paths
-- Validation that `class_names.json` has exactly 38 entries
+- Validation that `class_names.json` has exactly 39 entries
 - The paired `model.eval()` + `torch.no_grad()` guard in inference code
 - Device consistency checks
 
 ### ❌ Never add softmax to the model's `forward()` method
 `nn.CrossEntropyLoss` expects raw logits. Adding softmax before the loss breaks training numerically. For probability output at inference time, apply `torch.softmax(logits, dim=-1)` **outside** the model, in the serving layer.
 
-### ❌ Never change `NUM_CLASSES = 38` inline
-If the class count changes (e.g., a filtered subset is used), it must be updated in `src/constants.py` and the classifier head must be rebuilt and retrained from Phase 1.
+### ❌ Never change `NUM_CLASSES = 39` inline
+The count is **39** (38 crop conditions + `Background_without_leaves`, D-17b). If it changes again (e.g., a filtered subset is used), it must be updated in `src/greenvision/constants.py` **and** these guardrail docs, and the classifier head must be rebuilt and retrained from Phase 1.
 
 ---
 
@@ -87,7 +87,7 @@ If the class count changes (e.g., a filtered subset is used), it must be updated
 | `artifacts/class_names.json` | Ground truth for inference class mapping |
 | `models/*.pt` | Saved model checkpoints — overwriting loses training work |
 | `mlruns/` (entire directory) | MLflow artifacts and experiment logs — treat as append-only |
-| `src/constants.py` | Changing constants here affects training, inference, and API simultaneously |
+| `src/greenvision/constants.py` | Changing constants here affects training, inference, and API simultaneously |
 | `DOCS/IMPLEMENTATION_GUIDE.md` | Design decisions — update collaboratively, not autonomously |
 
 ---

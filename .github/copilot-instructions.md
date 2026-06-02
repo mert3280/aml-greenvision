@@ -8,7 +8,7 @@ This file provides context for GitHub Copilot and any AI coding assistant workin
 
 **GreenVision** is a plant disease classification system.
 
-- **What it does:** Classifies leaf images into one of 38 disease/health conditions across multiple crop types.
+- **What it does:** Classifies leaf images into one of 39 conditions — 38 crop disease/health classes plus a `Background_without_leaves` reject class (D-17b) — across multiple crop types.
 - **Who uses it:** Applied ML course graders; anyone testing the inference API.
 - **What it predicts:** Given a photo of a plant leaf, GreenVision returns the most likely disease condition (e.g., `Tomato___Late_blight`) and a confidence score.
 - **Stack:** Python · PyTorch · torchvision · MLflow · FastAPI
@@ -21,14 +21,14 @@ The model is a fine-tuned EfficientNet-B0. Training uses a **two-phase strategy*
 
 ### PlantVillage
 - **Format:** `torchvision.datasets.ImageFolder` — each subdirectory is one class.
-- **Classes:** 38 total, spanning multiple crop species and disease states.
+- **Classes:** 39 total — 38 crop disease/health classes spanning multiple species, plus the `Background_without_leaves` reject class (D-17b).
 - **Class naming convention:** `CropName___DiseaseName` (triple underscore)
   - Examples: `Apple___Apple_scab`, `Tomato___healthy`, `Corn_(maize)___Northern_Leaf_Blight`
   - The triple underscore is intentional and load-bearing — do not normalize or replace it.
 - **Class index mapping:** Determined at load time by `ImageFolder` (alphabetical). Persisted to `artifacts/class_names.json` after training. Always use that artifact for inference — never hardcode class indices.
 
 ### Class count breakdown (approximate)
-38 classes = healthy + diseased variants across: Apple, Blueberry, Cherry, Corn, Grape, Orange, Peach, Pepper, Potato, Raspberry, Soybean, Squash, Strawberry, Tomato.
+39 classes = 38 healthy + diseased variants across Apple, Blueberry, Cherry, Corn, Grape, Orange, Peach, Pepper, Potato, Raspberry, Soybean, Squash, Strawberry, Tomato — **plus** a 39th `Background_without_leaves` class kept so the model can reject non-leaf inputs (D-17b).
 
 ---
 
@@ -38,7 +38,7 @@ The model is a fine-tuned EfficientNet-B0. Training uses a **two-phase strategy*
 
 ```python
 IMAGE_SIZE           = 224           # EfficientNet-B0 expected input size
-NUM_CLASSES          = 38            # PlantVillage disease classes
+NUM_CLASSES          = 39            # 38 PlantVillage conditions + Background_without_leaves (D-17b)
 EFFICIENTNET_FEATURES = 1280         # Output channels of EfficientNet-B0 feature extractor
 DROPOUT_RATE         = 0.2           # Classifier head dropout
 
@@ -95,12 +95,12 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
 
 ### Error handling patterns
 - Validate model checkpoint paths before loading — raise `FileNotFoundError` with a clear message if missing.
-- Validate that `class_names.json` exists and has exactly 38 entries before running inference.
+- Validate that `class_names.json` exists and has exactly 39 entries before running inference.
 - Use `model.eval()` and `torch.no_grad()` together in every inference context — never one without the other.
 - Device placement: always move both model and data to the same device; check with `next(model.parameters()).device`.
 
 ### Constants file
-Define all constants in `src/constants.py`. Import from there — do not hardcode magic numbers inline.
+Define all constants in `src/greenvision/constants.py`. Import from there — do not hardcode magic numbers inline.
 
 ### Checkpointing pattern
 ```python

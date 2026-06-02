@@ -7,7 +7,7 @@
 
 ## 1. Project Overview
 
-**GreenVision** is a plant disease classifier built on the PlantVillage dataset. It fine-tunes a pretrained EfficientNet-B0 backbone to identify 38 disease/health conditions across multiple crop types. The eventual deliverable is a REST API (FastAPI) that accepts a leaf image and returns the predicted condition with confidence.
+**GreenVision** is a plant disease classifier built on the PlantVillage dataset. It fine-tunes a pretrained EfficientNet-B0 backbone to identify 39 conditions — 38 crop disease/health classes plus a `Background_without_leaves` reject class (D-17b) — across multiple crop types. The eventual deliverable is a REST API (FastAPI) that accepts a leaf image and returns the predicted condition with confidence.
 
 **Primary users:** Course graders + anyone testing the API endpoint.  
 **Secondary goal:** Demonstrate two-phase transfer learning on a real multi-class dataset.
@@ -22,6 +22,7 @@ A single-page log of every major design decision. **Settled** = locked in; don't
 
 | # | Decision | Choice | Rationale |
 |---|---|---|---|
+| D-17b | Class count: 38 vs 39 | **39** — keep `Background_without_leaves` | The download ships a 39th `Background_without_leaves` folder. Kept as a real reject class so the served API can decline non-leaf images (graders test arbitrary photos). Resolved 2026-05-31; `NUM_CLASSES`, `copilot-instructions.md`, and `agent.md` updated together (agent.md escalation satisfied). |
 
 D-01 — Backbone: EfficientNet-B0
 What you're trading off
@@ -84,7 +85,7 @@ A frozen backbone is always working with features optimized for ImageNet categor
 **Bottom line:** Two-phase is the simplest approach that avoids gradient shock, produces a natural checkpoint artifact, and is the standard transfer learning approach in the literature.
 -----------------
 
-| D-04 | Classifier head design | `Dropout(0.2) → Linear(1280 → 38)` | Mirrors torchvision's original head design; dropout regularizes the single dense layer |
+| D-04 | Classifier head design | `Dropout(0.2) → Linear(1280 → 39)` | Mirrors torchvision's original head design; dropout regularizes the single dense layer (39 outputs per D-17b) |
 | D-05 | Loss function | `nn.CrossEntropyLoss` on raw logits | Standard for multi-class; handles log-sum-exp numerically — no softmax in `forward()` |
 ------------------
 | D-06 | Phase 1 optimizer | AdamW, `lr=1e-3`, `weight_decay=1e-2` | AdamW decouples weight decay from the adaptive gradient update — standard Adam corrupts the intended regularization by scaling the decay through the adaptive moments. Applies even to a small head: correct behavior from the start costs nothing extra |
@@ -109,7 +110,7 @@ The decay is now a clean multiplicative shrink toward zero, identical in effect 
 | D-07 | Phase 2 learning rate | `1e-4` (10× lower than Phase 1) | Prevents large gradient updates from destroying pretrained backbone features |
 | D-08 | Normalization | ImageNet stats: mean `[0.485, 0.456, 0.406]`, std `[0.229, 0.224, 0.225]` | Backbone was trained on ImageNet; its filters expect this input distribution. Never compute from PlantVillage |
 | D-09 | Input image size | 224 × 224 | EfficientNet-B0's expected resolution; deviating changes spatial dimensions through the whole network |
-| D-10 | Dataset | PlantVillage, 38 classes, `ImageFolder` format | Course requirement; well-established benchmark for plant disease classification |
+| D-10 | Dataset | PlantVillage, 39 classes (38 + `Background_without_leaves`), `ImageFolder` format | Course requirement; well-established benchmark for plant disease classification |
 | D-11 | Class index mapping | Persist `dataset.classes` → `artifacts/class_names.json` immediately after `ImageFolder` loads | `ImageFolder` sorts alphabetically — the order is deterministic but must be frozen as an artifact so inference always agrees with training |
 | D-12 | Val/test augmentation | None — Resize(256) → CenterCrop(224) → Normalize only | Augmentation introduces randomness that inflates variance in evaluation metrics |
 | D-13 | Training augmentation | `RandomResizedCrop(224)`, `RandomHorizontalFlip()`, `ColorJitter(0.2, 0.2, 0.2)` | Leaf images vary in framing, orientation, and lighting; these transforms approximate realistic variation |
@@ -121,14 +122,22 @@ The decay is now a clean multiplicative shrink toward zero, identical in effect 
 
 | # | Decision | Options | Leaning | Blocking? |
 |---|---|---|---|---|
-| D-17 | Phase 1 epoch count | 3 or 5 | Decide by watching val loss curve — stop when it plateaus | Blocks Phase 2 start |
-| D-18 | Phase 2 epoch count | 5–10 | Depends on Phase 1 convergence quality | Blocks final eval |
-| D-19 | Phase 2 optimizer | AdamW, `lr=1e-4`, `weight_decay=1e-2` | Consistent with Phase 1 choice (D-06); decoupled decay is more important in Phase 2 where 5.3M backbone params are all updating. SGD dropped — AdamW covers the generalization concern without its tuning overhead | Blocks Phase 2 |
-| D-20 | Phase 2 LR schedule | `CosineAnnealingLR` vs. `ReduceLROnPlateau` | CosineAnnealing (no tuning needed); Plateau if LR needs to react to stalls | Blocks Phase 2 |
-| D-21 | Batch size | 32 or 64 | 32 if VRAM is tight; 64 preferred for stable gradient estimates | Blocks all training |
-| D-22 | Train/val/test split | 80/10/10 random split vs. use dataset's pre-split structure | Check dataset first — pre-split is reproducible without a random seed | Blocks data loading |
-| D-23 | Early stopping | patience=3 on val loss, or run fixed epochs | Patience=3 is safe default; may skip if epochs are few and time is cheap | Low priority |
-| D-24 | `DataLoader` num_workers | 4 (normal) or 0 (Windows debug fallback) | Start with 4; drop to 0 if multiprocessing errors appear on Windows | Blocks data loading |
+| D-17 | Phase 1 epoch count | 3 or 5 | **Starting at 5** with early stopping (patience 3); the val-loss curve from the first full run sets the final value | Blocks Phase 2 start |
+| D-18 | Phase 2 epoch count | 5–10 | **Starting at 10** with early stopping + cosine schedule; confirm after Phase 1 convergence | Blocks final eval |
+
+### Resolved during the WS0–WS5 implementation pass (2026-05-31)
+
+These are encoded in `src/greenvision/config.py` (tunable) and `constants.py` (locked).
+
+| # | Decision | Resolution |
+|---|---|---|
+| D-19 | Phase 2 optimizer | **AdamW**, `lr=1e-4`, `weight_decay=1e-2` |
+| D-20 | Phase 2 LR schedule | **`CosineAnnealingLR`** over Phase 2 epochs |
+| D-21 | Batch size | **64** (tunable; drop to 32 if VRAM-bound) |
+| D-22 | Train/val/test split | **Stratified 80/10/10**, seeded (`SEED=42`), persisted to `artifacts/splits.json` (no pre-split exists on disk) |
+| D-23 | Early stopping | **patience=3 on val loss**, both phases |
+| D-24 | `DataLoader` num_workers | **4**, auto-fallback to **0** on Windows multiprocessing errors |
+| New | Class imbalance | Stratified split + **class-weighted `CrossEntropyLoss`** (inverse-frequency weights from the train split only) |
 
 ---
 
@@ -136,8 +145,9 @@ The decay is now a clean multiplicative shrink toward zero, identical in effect 
 
 ### PlantVillage
 - **Source:** `torchvision.datasets.ImageFolder` pointing at the PlantVillage directory
-- **Total classes:** 38
-- **Split strategy:** [TBD — likely 80/10/10 train/val/test, or use the pre-split version if available]
+- **Total classes:** 39 (38 crop disease/health classes + `Background_without_leaves`, D-17b)
+- **Layout on disk:** flat — 39 class folders directly under the dataset root, **no** `train/val/test` split. We generate a stratified 80/10/10 split ourselves and freeze it to `artifacts/splits.json` (D-22).
+- **Split strategy:** stratified 80/10/10, seeded (`SEED=42`), persisted to `splits.json` (D-22, settled).
 - **Class naming convention:** `CropName___DiseaseName`  
   Examples: `Apple___Apple_scab`, `Tomato___healthy`, `Pepper,_bell___Bacterial_spot`  
   Note the triple underscore `___` between crop and condition. This is load-bearing — the class names artifact depends on it.
@@ -167,8 +177,8 @@ EfficientNet-B0 features (pretrained on ImageNet)
     ↓  adaptive avg pool
 [B, 1280]   ← feature dimension
     ↓  Dropout(p=0.2)
-    ↓  Linear(1280 → 38)
-[B, 38]     ← raw logits
+    ↓  Linear(1280 → 39)
+[B, 39]     ← raw logits
 ```
 
 **Critical constants — do not change without updating copilot-instructions.md:**
@@ -176,7 +186,7 @@ EfficientNet-B0 features (pretrained on ImageNet)
 | Constant | Value | Source |
 |---|---|---|
 | `IMAGE_SIZE` | `224` | EfficientNet-B0 default |
-| `NUM_CLASSES` | `38` | PlantVillage dataset |
+| `NUM_CLASSES` | `39` | 38 PlantVillage conditions + `Background_without_leaves` (D-17b) |
 | `EFFICIENTNET_FEATURES` | `1280` | EfficientNet-B0 final channel count |
 | `IMAGENET_MEAN` | `[0.485, 0.456, 0.406]` | ImageNet statistics |
 | `IMAGENET_STD` | `[0.229, 0.224, 0.225]` | ImageNet statistics |
@@ -292,9 +302,11 @@ This list is the ground truth for class index → label mapping at inference tim
 
 ## 6. Experiment Tracking (MLflow)
 
-**[TBD — MLflow integration planned but not yet implemented]**
+**Implemented** in `greenvision.train` (2026-05-31): one parent run (`two_phase_train`)
+with two nested child runs (`phase1_head_only`, `phase2_finetune`). Tracking store is the
+local `./mlruns` file backend; inspect with `mlflow ui --backend-store-uri ./mlruns`.
 
-Planned logged values:
+Logged values:
 - Hyperparameters: epochs, lr (both phases), batch size, optimizer, dropout rate
 - Per-epoch metrics: train loss, val loss, train acc, val acc
 - Artifacts: `class_names.json`, final model checkpoint
@@ -313,13 +325,20 @@ with mlflow.start_run(run_name="phase1_head_only"):
 
 ## 7. Serving (FastAPI)
 
-**[TBD — API scaffold planned for after training is complete]**
+**Implemented (WS7).** Run `uvicorn app.main:app`; interactive docs at `/docs`.
 
-Planned endpoint: `POST /predict`  
-- Input: multipart image upload  
-- Output: `{"class": "Tomato___Late_blight", "confidence": 0.94, "class_index": 27}`
+- `GET /health` → `{"status":"ok","model_loaded":true,"device":"cpu"}`
+- `GET /classes` → the 39 class labels (index order from `class_names.json`)
+- `POST /predict` — multipart image upload →
+  `{"class": "Tomato___Late_blight", "confidence": 0.94, "class_index": 27, "top_k": [...]}`
+  (`415` on non-image content-type, `422` on empty/undecodable bytes, `503` if the model
+  failed to load). The JSON key is `class` (Pydantic alias; `class` is reserved in Python).
 
-The inference transform pipeline must use the **same val/test transforms** (no augmentation, fixed normalization).
+The model loads once at startup (`src/greenvision/inference.py` → `PlantClassifier`). The
+inference transform is the project's shared `eval_transform` — **same val/test pipeline**
+(no augmentation, fixed normalization). Softmax is applied in this serving layer, never in
+`forward`. 🔒 Changing the `/predict` response schema is a breaking change → confirm first
+(agent.md).
 
 ---
 
@@ -342,14 +361,14 @@ Track these as implementation proceeds. Move entries to the relevant section abo
 ## 9. Implementation Milestones
 
 - [x] MNIST CNN baseline (98.7% val accuracy — `mnist_cnn.ipynb`)
-- [ ] Dataset loading + ImageFolder verification
-- [ ] EfficientNet model setup + head replacement
-- [ ] Phase 1 training run
-- [ ] Phase 2 training run
-- [ ] MLflow integration
-- [ ] FastAPI serving endpoint
-- [ ] Final evaluation on test set
+- [x] Dataset loading + ImageFolder verification (`greenvision.data`; 55,448 imgs / 39 classes; stratified 80/10/10 frozen to `splits.json`)
+- [x] EfficientNet model setup + head replacement (`greenvision.model`; head `Dropout → Linear(1280, 39)`)
+- [x] Phase 1 training run — engine + two-phase orchestration implemented & smoke-verified (full GPU run pending)
+- [x] Phase 2 training run — loads Phase 1 best, unfreezes, cosine LR; smoke-verified (full GPU run pending)
+- [x] MLflow integration (`greenvision.train`; parent + 2 nested runs with params/metrics/artifacts)
+- [x] FastAPI serving endpoint (`app/main.py`; `/health`, `/classes`, `/predict`; `inference.PlantClassifier`; 8 API tests)
+- [x] Final evaluation on test set — **top-1 98.54%**, top-5 99.98%, macro F1 98.05%, weighted F1 98.54% on 5,545 test samples (`evaluate.py`; reports in `artifacts/reports/`)
 
 ---
 
-*Last updated: 2026-05-25. Update this file as decisions solidify.*
+*Last updated: 2026-05-31. Update this file as decisions solidify.*

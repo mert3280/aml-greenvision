@@ -1,0 +1,11 @@
+{
+  "top1_accuracy": 0.985392,
+  "top5_accuracy": 0.99982,
+  "macro_f1": 0.980511,
+  "weighted_f1": 0.985381,
+  "num_test_samples": 5545,
+  "num_classes": 39,
+  "checkpoint": "C:\\classes\\Spring 2026\\applied ML\\aml-greenvision\\models\\phase2_best.pt",
+  "checkpoint_epoch": 2,
+  "checkpoint_val_acc": 0.983408
+}

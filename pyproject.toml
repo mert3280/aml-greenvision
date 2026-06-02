@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "greenvision"
+version = "0.1.0"
+description = "Plant-disease image classifier (EfficientNet-B0, two-phase fine-tuning)."
+readme = "README.md"
+requires-python = ">=3.11"
+# Runtime dependencies are pinned in requirements.txt (incl. the CUDA torch build).
+# This list is intentionally loose so `pip install -e .` does not try to re-resolve torch.
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "slow: marks tests as slow or GPU-dependent (deselect with '-m \"not slow\"').",
+]
+
+[tool.coverage.run]
+source = ["greenvision"]
+branch = true
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 100

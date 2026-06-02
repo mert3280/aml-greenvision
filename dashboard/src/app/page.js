@@ -65,8 +65,7 @@ export default function Dashboard() {
           <span className="text-sage"> Instantly</span>
         </h2>
         <p className="font-body text-earth/65 text-lg max-w-lg mx-auto leading-relaxed">
-          Upload a clear leaf photo and our AI will diagnose it in seconds —
-          trained on 39 plant conditions with 98.5% accuracy.
+          Upload a clear leaf photo and our AI will diagnose it in seconds
         </p>
       </section>
 

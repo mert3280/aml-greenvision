@@ -4,7 +4,7 @@ import ConfidenceBar from './ConfidenceBar'
 import AnalyticsPanel from './AnalyticsPanel'
 import LowConfidencePrompt from './LowConfidencePrompt'
 
-const CONFIDENCE_THRESHOLD = 0.60
+const CONFIDENCE_THRESHOLD = 0.50
 
 function formatClass(name) {
   if (name === 'Background_without_leaves') return 'Background (no leaf)'
@@ -43,7 +43,7 @@ export default function PredictionPanel({ result, onReset }) {
   if (!result) return null
 
   if (result.confidence < CONFIDENCE_THRESHOLD) {
-    return <LowConfidencePrompt onReset={onReset} />
+    return <LowConfidencePrompt topGuesses={(result.top_k || []).slice(0, 3)} onReset={onReset} />
   }
 
   const { emoji, badge, badgeCls, barColor } = getStatusMeta(result.class)

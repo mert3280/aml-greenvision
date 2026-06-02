@@ -28,4 +28,3 @@ htmlcov/
 dashboard/node_modules/
 dashboard/.next/
 dashboard/.env*.local
-

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 96" fill="none" role="img" aria-label="GreenVision logo">
+  <!-- Leaf body: teardrop shape, tip at top -->
+  <path
+    d="M40 6
+       C58 6 70 22 70 42
+       C70 64 58 80 40 90
+       C22 80 10 64 10 42
+       C10 22 22 6 40 6 Z"
+    fill="#1B4332"
+  />
+
+  <!-- Left highlight for depth -->
+  <path
+    d="M40 6
+       C26 6 14 20 11 36
+       C10 40 10 45 11 50
+       C13 34 22 16 40 6 Z"
+    fill="#40916C"
+    opacity="0.35"
+  />
+
+  <!-- Central vein -->
+  <line x1="40" y1="12" x2="40" y2="86" stroke="#40916C" stroke-width="2.2" stroke-linecap="round"/>
+
+  <!-- Upper-left side vein -->
+  <path d="M40 34 Q27 43 21 54" stroke="#40916C" stroke-width="1.4" stroke-linecap="round" opacity="0.75"/>
+  <!-- Lower-left side vein -->
+  <path d="M40 52 Q29 60 23 70" stroke="#40916C" stroke-width="1.2" stroke-linecap="round" opacity="0.60"/>
+
+  <!-- Upper-right side vein -->
+  <path d="M40 34 Q53 43 59 54" stroke="#40916C" stroke-width="1.4" stroke-linecap="round" opacity="0.75"/>
+  <!-- Lower-right side vein -->
+  <path d="M40 52 Q51 60 57 70" stroke="#40916C" stroke-width="1.2" stroke-linecap="round" opacity="0.60"/>
+
+  <!-- Vision lens ring -->
+  <circle cx="40" cy="48" r="14" stroke="#74C69D" stroke-width="2.5" fill="none"/>
+
+  <!-- Iris inner fill (subtle) -->
+  <circle cx="40" cy="48" r="9" fill="#1B4332"/>
+
+  <!-- Pupil / focal dot -->
+  <circle cx="40" cy="48" r="4.5" fill="#74C69D"/>
+
+  <!-- Lens gleam highlight -->
+  <circle cx="36" cy="44" r="1.8" fill="#D8F3DC" opacity="0.65"/>
+</svg>

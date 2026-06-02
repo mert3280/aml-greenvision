@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --forest:  #1B4332;
+  --sage:    #40916C;
+  --mint:    #74C69D;
+  --seafoam: #D8F3DC;
+  --cream:   #F7F6EE;
+  --earth:   #5C4033;
+  --gold:    #D4A843;
+  --alert:   #C1440E;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--cream);
+  color: var(--earth);
+}
+
+/* Leaf-pattern background for hero section */
+.hero-bg {
+  background-image:
+    radial-gradient(circle at 15% 40%, rgba(116, 198, 157, 0.12) 0%, transparent 55%),
+    radial-gradient(circle at 85% 20%, rgba(64, 145, 108, 0.10) 0%, transparent 50%),
+    radial-gradient(circle at 50% 80%, rgba(27, 67, 50, 0.06) 0%, transparent 45%);
+}
+
+/* Confidence bar shimmer on load */
+@keyframes barGrow {
+  from { width: 0%; }
+}
+
+.bar-grow {
+  animation: barGrow 0.7s ease-out;
+}

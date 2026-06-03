@@ -12,10 +12,15 @@ export default function HealthBadge() {
   const [state, setState] = useState('checking')
 
   useEffect(() => {
-    fetch('/api/health')
-      .then(r => r.json())
-      .then(data => setState(data.model_loaded ? 'online' : 'offline'))
-      .catch(() => setState('offline'))
+    const check = () =>
+      fetch('/api/health')
+        .then(r => r.json())
+        .then(data => setState(data.model_loaded ? 'online' : 'offline'))
+        .catch(() => setState('offline'))
+
+    check()
+    const id = setInterval(check, 10_000)
+    return () => clearInterval(id)
   }, [])
 
   const { dot, label, pulse } = STATES[state]

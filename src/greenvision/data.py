@@ -17,16 +17,20 @@ only ever touches the train split.
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 
 import numpy as np
 import torch
+from PIL import Image
+from scipy import ndimage as ndi
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset, Subset
 from torchvision import datasets, transforms
 
 from .config import TrainConfig
 from .constants import (
+    BG_DIR,
     CLASS_NAMES_PATH,
     DATA_ROOT,
     IMAGE_SIZE,
@@ -39,17 +43,169 @@ from .constants import (
 )
 
 # --------------------------------------------------------------------------------------
+# Background-swap augmentation (FIX-06).
+# --------------------------------------------------------------------------------------
+class RandomBackground:
+    """Replace the studio (white/black) background with a random landscape image.
+
+    PlantVillage images are shot against near-white or near-black studio backgrounds.
+    This transform segments the leaf with a brightness threshold and composites it onto
+    a random outdoor photo from ``bg_dir``, closing the domain gap between the studio
+    dataset and real-world field photos.
+
+    Background paths are scanned lazily on the first ``__call__`` so the instance can be
+    created at module-import time even if the download hasn't run yet.
+
+    Parameters
+    ----------
+    bg_dir : Path or None
+        Folder of landscape JPEG/PNG images. When None or empty (no download yet),
+        the transform falls back to procedural backgrounds (solid colour + noise).
+    p : float
+        Probability of applying the swap per image.
+    white_thresh : int
+        Pixels with **all** RGB channels above this value are treated as white bg.
+    black_thresh : int
+        Pixels with **all** RGB channels below this value are treated as black bg.
+    """
+
+    def __init__(
+        self,
+        bg_dir: Path | None = None,
+        p: float = 0.8,
+        white_thresh: int = 200,
+        black_thresh: int = 30,
+    ) -> None:
+        self.bg_dir = Path(bg_dir) if bg_dir is not None else None
+        self.p = p
+        self.white_thresh = white_thresh
+        self.black_thresh = black_thresh
+        self._bg_paths: list[Path] | None = None  # None = not yet scanned
+
+    # ------------------------------------------------------------------
+    # Public
+    # ------------------------------------------------------------------
+    @property
+    def num_backgrounds(self) -> int:
+        """Number of background images available (triggers lazy scan)."""
+        return len(self._load_paths())
+
+    def __call__(self, img: Image.Image) -> Image.Image:
+        if random.random() > self.p:
+            return img
+        arr = np.array(img.convert("RGB"))
+        mask_arr = self._leaf_mask(arr)
+        # Guard: if the mask is nearly empty the threshold failed — return unchanged.
+        if mask_arr.mean() < 5:
+            return img
+        mask = Image.fromarray(mask_arr, mode="L")
+        w, h = img.size
+        bg = self._random_background(w, h)
+        # composite: where mask=255 keep leaf; where mask=0 use background.
+        return Image.composite(img.convert("RGB"), bg, mask)
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+    def _load_paths(self) -> list[Path]:
+        """Scan bg_dir once and cache the result."""
+        if self._bg_paths is None:
+            self._bg_paths = []
+            if self.bg_dir is not None and self.bg_dir.exists():
+                for ext in ("*.jpg", "*.jpeg", "*.png", "*.JPG", "*.JPEG", "*.PNG"):
+                    self._bg_paths.extend(self.bg_dir.rglob(ext))
+        return self._bg_paths
+
+    def _leaf_mask(self, arr: np.ndarray) -> np.ndarray:
+        """Return uint8 mask: 255 = leaf pixel, 0 = studio background pixel.
+
+        Uses border-connected-component removal rather than a global threshold.
+        The brightness thresholds identify *candidate* background pixels; only
+        those candidates that are spatially connected to the image border are
+        treated as real background.  Interior white/dark regions (disease
+        lesions — powdery mildew, pale blight patches, dark spot) are isolated
+        islands surrounded by green leaf tissue and are NOT connected to the
+        border, so they are correctly retained in the leaf mask.  A small
+        morphological closing fills stray holes and smooths the leaf boundary.
+        """
+        white = np.all(arr > self.white_thresh, axis=2)
+        black = np.all(arr < self.black_thresh, axis=2)
+        bg_candidate = white | black
+
+        # Label every connected component of bg-candidate pixels.
+        # Non-candidate (leaf) pixels are labeled 0 by convention.
+        labeled, _ = ndi.label(bg_candidate)
+
+        # A component is real background only if it touches the image border.
+        border_labels: set[int] = set()
+        for edge in (labeled[0, :], labeled[-1, :], labeled[:, 0], labeled[:, -1]):
+            border_labels.update(edge.tolist())
+        border_labels.discard(0)  # 0 = leaf pixels — never background
+
+        real_bg = (
+            np.isin(labeled, list(border_labels))
+            if border_labels
+            else np.zeros(arr.shape[:2], dtype=bool)
+        )
+
+        # Morphological close: fills isolated dark/light specs inside the leaf
+        # and smooths the ragged border left by the pixel-level threshold.
+        leaf = ndi.binary_closing(~real_bg, iterations=2)
+        return leaf.astype(np.uint8) * 255
+
+    def _random_background(self, w: int, h: int) -> Image.Image:
+        """Return a PIL RGB background image of exactly (w, h)."""
+        paths = self._load_paths()
+        if paths and random.random() < 0.85:
+            path = random.choice(paths)
+            try:
+                bg = Image.open(path).convert("RGB")
+                # Scale to cover (w, h) then take a random crop — avoids always centering.
+                bw, bh = bg.size
+                scale = max(w / bw, h / bh) * 1.05  # tiny overscale so crop never clips
+                new_w, new_h = max(w, int(bw * scale)), max(h, int(bh * scale))
+                bg = bg.resize((new_w, new_h), Image.BILINEAR)
+                left = random.randint(0, new_w - w)
+                top = random.randint(0, new_h - h)
+                return bg.crop((left, top, left + w, top + h))
+            except Exception:
+                pass  # corrupt image — fall through to procedural
+        # Procedural fallback: random solid colour or Gaussian noise.
+        if random.random() < 0.5:
+            colour = tuple(random.randint(20, 180) for _ in range(3))
+            return Image.new("RGB", (w, h), colour)
+        noise = np.random.randint(0, 256, (h, w, 3), dtype=np.uint8)
+        return Image.fromarray(noise, "RGB")
+
+
+# --------------------------------------------------------------------------------------
 # Transforms (verbatim from the guide §5 / copilot-instructions).
 # train_transform augments; eval_transform is deterministic and is the SINGLE pipeline
 # shared by val, test, and inference (D-12). Never add Random* ops to eval_transform.
+#
+# Pipeline (domain-robustness build, FIX-01 + FIX-06):
+#   1. RandomBackground  — swap studio bg for a landscape photo BEFORE cropping so the
+#      crop can naturally include background regions (simulates in-the-field framing).
+#   2. RandomResizedCrop scale=(0.5,1.0) — partial leaf views.
+#   3-8. Rotation, colour, perspective, blur, grayscale — outdoor shooting conditions.
+#   9. RandomErasing (post-ToTensor) — occlusion robustness, final background-dep. break.
 # --------------------------------------------------------------------------------------
+_random_bg = RandomBackground(bg_dir=BG_DIR, p=0.9)
+
 train_transform = transforms.Compose(
     [
-        transforms.RandomResizedCrop(IMAGE_SIZE),
+        _random_bg,
+        transforms.RandomResizedCrop(IMAGE_SIZE, scale=(0.5, 1.0)),
         transforms.RandomHorizontalFlip(),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+        transforms.RandomVerticalFlip(p=0.2),
+        transforms.RandomRotation(degrees=45),
+        transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1),
+        transforms.RandomPerspective(distortion_scale=0.4, p=0.5),
+        transforms.RandomGrayscale(p=0.1),
+        transforms.GaussianBlur(kernel_size=5, sigma=(0.1, 2.0)),
         transforms.ToTensor(),
         transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        transforms.RandomErasing(p=0.4, scale=(0.02, 0.25), ratio=(0.3, 3.3)),
     ]
 )
 

@@ -106,9 +106,13 @@ export default function Dashboard() {
       </main>
 
       {/* Footer */}
-      <footer className="py-6 border-t border-seafoam text-center">
+      <footer className="py-6 border-t border-seafoam text-center space-y-2">
         <p className="font-body text-xs text-earth/35">
           GreenVision &middot; EfficientNet-B0 &middot; 39 plant conditions &middot; 98.54% top-1 accuracy
+        </p>
+        <p className="font-body text-xs text-earth/50 max-w-lg mx-auto leading-relaxed">
+          <strong className="font-semibold">Disclaimer:</strong> AI predictions are for informational purposes only.
+          Always consult a qualified agronomist, plant pathologist, or extension service before taking any action.
         </p>
       </footer>
     </div>

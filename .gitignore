@@ -1,4 +1,5 @@
 data/Plant_leave_diseases_dataset_without_augmentation/
+data/backgrounds/
 
 # Generated artifacts — track key outputs, ignore raw intermediate files.
 artifacts/*
@@ -28,3 +29,9 @@ htmlcov/
 dashboard/node_modules/
 dashboard/.next/
 dashboard/.env*.local
+
+# Training and server logs (ephemeral, not project artifacts).
+train_out.log
+train_err.log
+server.log
+server_err.log

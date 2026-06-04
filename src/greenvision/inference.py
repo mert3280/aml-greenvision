@@ -17,12 +17,13 @@ no network access: every weight comes from the checkpoint.
 
 from __future__ import annotations
 
+import math
 import os
 
 import torch
 from PIL import Image
 
-from .constants import CLASS_NAMES_PATH, NUM_CLASSES, PHASE2_CKPT
+from .constants import CLASS_NAMES_PATH, IMAGE_SIZE, IMAGENET_MEAN, IMAGENET_STD, NUM_CLASSES, PHASE2_CKPT, RESIZE_SIZE
 from .data import eval_transform, load_class_names
 from .engine import load_checkpoint, resolve_device
 from .model import build_model
@@ -61,6 +62,7 @@ class PlantClassifier:
         checkpoint_path=PHASE2_CKPT,
         class_names_path=CLASS_NAMES_PATH,
         device: str | None = None,
+        temperature: float = 0.5,
     ) -> None:
         # Class names first: this validates presence AND len == NUM_CLASSES (agent.md).
         self.class_names: list[str] = load_class_names(class_names_path)
@@ -77,9 +79,11 @@ class PlantClassifier:
         self.model = model
         self.transform = eval_transform
         self.checkpoint_val_acc: float | None = checkpoint.get("val_acc")
+        # T < 1 sharpens the softmax distribution; T=1 is no-op. Tune without retraining.
+        self.temperature: float = temperature
 
     @torch.no_grad()
-    def predict(self, image: Image.Image, top_k: int = 5) -> dict:
+    def predict(self, image: Image.Image, top_k: int = 5, tta: bool = True) -> dict:
         """Classify a single image and return the top prediction plus a top-k list.
 
         Parameters
@@ -89,6 +93,11 @@ class PlantClassifier:
         top_k : int
             Number of ranked predictions to include in ``top_k`` (clamped to
             ``[1, NUM_CLASSES]``).
+        tta : bool
+            When True (default), average logits over 10 augmented views (5 crops ×
+            horizontal flip), then apply temperature-scaled softmax. Averaging in logit
+            space (geometric mean of probabilities) preserves sharper distributions than
+            averaging probabilities directly.
 
         Returns
         -------
@@ -97,12 +106,45 @@ class PlantClassifier:
             is a softmax probability in ``[0, 1]``, ``class_index`` indexes
             ``class_names``, and ``top_k`` is a descending list of the same three keys.
         """
-        top_k = max(1, min(top_k, len(self.class_names)))
+        from torchvision import transforms as T
 
-        # [3, 224, 224] -> [1, 3, 224, 224] on the model's device.
-        tensor = self.transform(image.convert("RGB")).unsqueeze(0).to(self.device)
-        logits = self.model(tensor)                       # raw logits, shape [1, NUM_CLASSES]
-        probs = torch.softmax(logits, dim=1).squeeze(0)   # softmax OUTSIDE the model
+        top_k = max(1, min(top_k, len(self.class_names)))
+        rgb = image.convert("RGB")
+
+        if tta:
+            # 5 deterministic crops (center + four corners) × h-flip = 10 views.
+            # Uses the same resize/crop/normalize pipeline as eval_transform so there is
+            # no preprocessing mismatch — only the crop position and flip vary.
+            resized = T.Resize(RESIZE_SIZE)(rgb)
+            crops = T.FiveCrop(IMAGE_SIZE)(resized)   # tuple of 5 PIL images
+            tensors = []
+            for crop in crops:
+                t = T.ToTensor()(crop)
+                t = T.Normalize(IMAGENET_MEAN, IMAGENET_STD)(t)
+                tensors.append(t)
+                tensors.append(torch.flip(t, dims=[2]))  # horizontal flip
+            batch = torch.stack(tensors).to(self.device)  # [10, 3, IMAGE_SIZE, IMAGE_SIZE]
+            # Average in logit space (= geometric mean of probs) before softmax.
+            mean_logits = self.model(batch).mean(dim=0)   # [NUM_CLASSES]
+        else:
+            mean_logits = self.model(
+                self.transform(rgb).unsqueeze(0).to(self.device)
+            ).squeeze(0)                                   # [NUM_CLASSES]
+
+        # Entropy-adaptive temperature: only sharpen when the unscaled distribution
+        # already has a genuine preference.  When the model is uncertain (high entropy,
+        # e.g. on OOD real-world photos) T blends back toward 1.0 so we don't amplify
+        # a confidently wrong answer.  When the model is sure (low entropy) the full
+        # self.temperature sharpening is applied.
+        #
+        # effective_T = temperature  (confident)  …  1.0  (uniform/uncertain)
+        raw_probs = torch.softmax(mean_logits, dim=0)
+        norm_entropy = (
+            -(raw_probs * torch.log(raw_probs + 1e-9)).sum().item()
+            / math.log(len(self.class_names))
+        )  # 0 = peaked, 1 = uniform
+        effective_temp = self.temperature + norm_entropy * (1.0 - self.temperature)
+        probs = torch.softmax(mean_logits / effective_temp, dim=0)  # softmax OUTSIDE the model
 
         top_conf, top_idx = torch.topk(probs, k=top_k)
         ranked = [
@@ -126,6 +168,7 @@ def load_classifier(
     checkpoint_path=PHASE2_CKPT,
     class_names_path=CLASS_NAMES_PATH,
     device: str | None = None,
+    temperature: float = 0.5,
 ) -> PlantClassifier:
     """Convenience constructor mirroring :class:`PlantClassifier` for callers that prefer
     a function (e.g. the FastAPI lifespan handler). See that class for parameter docs and
@@ -134,4 +177,5 @@ def load_classifier(
         checkpoint_path=checkpoint_path,
         class_names_path=class_names_path,
         device=device,
+        temperature=temperature,
     )

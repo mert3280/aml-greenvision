@@ -1,5 +1,5 @@
+import Link from 'next/link'
 import HealthBadge from './HealthBadge'
-import Image from 'next/image'
 
 export default function Header() {
   return (
@@ -24,8 +24,24 @@ export default function Header() {
           </div>
         </div>
 
-        {/* API status */}
-        <HealthBadge />
+        {/* Nav + API status */}
+        <div className="flex items-center gap-6">
+          <nav className="hidden sm:flex items-center gap-4">
+            <Link
+              href="/"
+              className="font-body text-sm text-cream/70 hover:text-cream transition-colors"
+            >
+              Predict
+            </Link>
+            <Link
+              href="/augmentation"
+              className="font-body text-sm text-cream/70 hover:text-cream transition-colors"
+            >
+              Augmentation
+            </Link>
+          </nav>
+          <HealthBadge />
+        </div>
       </div>
     </header>
   )

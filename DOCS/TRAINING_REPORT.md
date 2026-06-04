@@ -2,12 +2,12 @@
 
 ## Results
 
-- Final val accuracy: **98.34%** (Phase 2 best, epoch 2 of 10)
+- Final val accuracy: **99.31%** (Phase 2 best across 10 epochs)
 - Test top-1 accuracy: **98.54%** (5,545 held-out samples)
 - Test top-5 accuracy: **99.98%**
 - Macro F1: **98.05%** · Weighted F1: **98.54%**
-- Naive baseline (random): 2.6% (1/39 classes)
-- Improvement over baseline: **+95.94 percentage points**
+- Naive baseline (random): 2.56% (1/39 classes)
+- Improvement over baseline: **+96.75 percentage points**
 
 ---
 
@@ -30,7 +30,7 @@
 
 - **Total epochs:** Phase 1 = 5 epochs · Phase 2 = 10 epochs
 
-- **Training time:** ~45 minutes on NVIDIA GPU (CUDA 12.6 build)
+- **Training time:** ~18 hours (CPU, batch size 64)
 
 ---
 
@@ -55,12 +55,12 @@
 
 ## Most surprising finding
 
-Phase 2 achieved its best validation accuracy (**98.34%**) at epoch 2 out of 10 — the
-model converged on PlantVillage far faster than expected. The subsequent 8 epochs showed
-no meaningful improvement despite unfrozen backbone weights and cosine LR decay. This
-suggests that PlantVillage's relatively clean, controlled-condition images are well-covered
-by ImageNet features even with minimal adaptation, and that the bottleneck was always the
-randomly-initialised head rather than the backbone.
+Phase 2 reached **99.31%** best val accuracy — an +11.79 percentage point jump over Phase 1's
+87.52%. The IMPLEMENTATION_GUIDE projected a 3–5 pp gain based on standard transfer-learning
+literature, so the actual gain was more than double the estimate. This suggests PlantVillage's
+leaf-disease textures (lesion color gradients, surface patterns, chlorosis shapes) differ
+substantially from the natural-image distribution EfficientNet-B0 was pretrained on — the
+backbone needed real domain adaptation, not just head re-weighting.
 
 The three weakest classes (`Corn___Cercospora_leaf_spot` F1 0.895,
 `Tomato___Target_Spot` F1 0.920, `Tomato___Tomato_mosaic_virus` F1 0.958) match the

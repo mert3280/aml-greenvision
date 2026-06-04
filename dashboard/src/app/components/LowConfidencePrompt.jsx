@@ -43,6 +43,15 @@ export default function LowConfidencePrompt({ topGuesses, onReset }) {
         ))}
       </ol>
 
+      <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-5 flex gap-3 items-start">
+        <span className="text-amber-500 text-lg select-none shrink-0 mt-0.5" aria-hidden="true">🔬</span>
+        <p className="font-body text-sm text-amber-800 leading-relaxed">
+          <strong>Further research is required before acting.</strong> This prediction is
+          uncertain and should not be used as the sole basis for treatment or intervention
+          decisions. Consult an agronomist or plant pathologist to confirm any diagnosis.
+        </p>
+      </div>
+
       <button
         onClick={onReset}
         className="bg-sage text-white py-2.5 px-7 rounded-xl font-body font-semibold text-sm

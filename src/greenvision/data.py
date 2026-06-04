@@ -36,6 +36,7 @@ from .constants import (
     IMAGE_SIZE,
     IMAGENET_MEAN,
     IMAGENET_STD,
+    MASK_DIR,
     NUM_CLASSES,
     RESIZE_SIZE,
     SEED,
@@ -43,15 +44,27 @@ from .constants import (
 )
 
 # --------------------------------------------------------------------------------------
-# Background-swap augmentation (FIX-06).
+# Custom PIL loader — preserves the source file path on the PIL Image after .convert().
+# torchvision's default pil_loader loses img.filename when it calls img.convert("RGB").
+# RandomBackground._load_cached_mask() reads img.filename to locate the BiRefNet mask.
+# --------------------------------------------------------------------------------------
+def _pil_loader(path: str) -> Image.Image:
+    with open(path, "rb") as f:
+        img = Image.open(f)
+        converted = img.convert("RGB")
+    converted.filename = path
+    return converted
+
+
+# --------------------------------------------------------------------------------------
+# Background-swap augmentation (FIX-06 / FIX-06c).
 # --------------------------------------------------------------------------------------
 class RandomBackground:
-    """Replace the studio (white/black) background with a random landscape image.
+    """Replace the studio background with a random landscape image.
 
-    PlantVillage images are shot against near-white or near-black studio backgrounds.
-    This transform segments the leaf with a brightness threshold and composites it onto
-    a random outdoor photo from ``bg_dir``, closing the domain gap between the studio
-    dataset and real-world field photos.
+    Uses BiRefNet precomputed masks (FIX-06c) for pixel-accurate leaf segmentation when
+    available, falling back to the brightness-threshold heuristic (FIX-06/06b) otherwise.
+    This ensures training is never blocked while masks are being precomputed.
 
     Background paths are scanned lazily on the first ``__call__`` so the instance can be
     created at module-import time even if the download hasn't run yet.
@@ -59,24 +72,32 @@ class RandomBackground:
     Parameters
     ----------
     bg_dir : Path or None
-        Folder of landscape JPEG/PNG images. When None or empty (no download yet),
-        the transform falls back to procedural backgrounds (solid colour + noise).
+        Folder of landscape JPEG/PNG images. When None or empty, falls back to
+        procedural backgrounds (solid colour + noise).
+    mask_dir : Path or None
+        Root of the BiRefNet mask cache produced by ``scripts/precompute_masks.py``.
+        Masks are stored as grayscale PNGs mirroring the dataset folder structure.
+        When None or a mask is missing, the heuristic ``_leaf_mask`` is used instead.
     p : float
         Probability of applying the swap per image.
     white_thresh : int
-        Pixels with **all** RGB channels above this value are treated as white bg.
+        Pixels with **all** RGB channels above this value are treated as white bg
+        (heuristic fallback only).
     black_thresh : int
-        Pixels with **all** RGB channels below this value are treated as black bg.
+        Pixels with **all** RGB channels below this value are treated as black bg
+        (heuristic fallback only).
     """
 
     def __init__(
         self,
         bg_dir: Path | None = None,
+        mask_dir: Path | None = None,
         p: float = 0.8,
         white_thresh: int = 200,
         black_thresh: int = 30,
     ) -> None:
         self.bg_dir = Path(bg_dir) if bg_dir is not None else None
+        self.mask_dir = Path(mask_dir) if mask_dir is not None else None
         self.p = p
         self.white_thresh = white_thresh
         self.black_thresh = black_thresh
@@ -93,12 +114,15 @@ class RandomBackground:
     def __call__(self, img: Image.Image) -> Image.Image:
         if random.random() > self.p:
             return img
-        arr = np.array(img.convert("RGB"))
-        mask_arr = self._leaf_mask(arr)
-        # Guard: if the mask is nearly empty the threshold failed — return unchanged.
-        if mask_arr.mean() < 5:
-            return img
-        mask = Image.fromarray(mask_arr, mode="L")
+        # Prefer BiRefNet cached mask; fall back to heuristic segmentation.
+        mask = self._load_cached_mask(img)
+        if mask is None:
+            arr = np.array(img.convert("RGB"))
+            mask_arr = self._leaf_mask(arr)
+            # Guard: if the mask is nearly empty the threshold failed — return unchanged.
+            if mask_arr.mean() < 5:
+                return img
+            mask = Image.fromarray(mask_arr, mode="L")
         w, h = img.size
         bg = self._random_background(w, h)
         # composite: where mask=255 keep leaf; where mask=0 use background.
@@ -115,6 +139,30 @@ class RandomBackground:
                 for ext in ("*.jpg", "*.jpeg", "*.png", "*.JPG", "*.JPEG", "*.PNG"):
                     self._bg_paths.extend(self.bg_dir.rglob(ext))
         return self._bg_paths
+
+    def _load_cached_mask(self, img: Image.Image) -> Image.Image | None:
+        """Return the BiRefNet mask PNG for *img* if it exists, else None.
+
+        Resolves the mask path by stripping ``DATA_ROOT`` from ``img.filename``
+        (set by ``_pil_loader``) and appending the relative path under ``mask_dir``.
+        Returns a grayscale PIL Image resized to match *img* if sizes differ.
+        """
+        if self.mask_dir is None:
+            return None
+        filename = getattr(img, "filename", None)
+        if not filename:
+            return None
+        try:
+            rel = Path(filename).relative_to(DATA_ROOT)
+        except ValueError:
+            return None
+        mask_path = self.mask_dir / rel.with_suffix(".png")
+        if not mask_path.exists():
+            return None
+        mask = Image.open(mask_path).convert("L")
+        if mask.size != img.size:
+            mask = mask.resize(img.size, Image.BILINEAR)
+        return mask
 
     def _leaf_mask(self, arr: np.ndarray) -> np.ndarray:
         """Return uint8 mask: 255 = leaf pixel, 0 = studio background pixel.
@@ -190,7 +238,7 @@ class RandomBackground:
 #   3-8. Rotation, colour, perspective, blur, grayscale — outdoor shooting conditions.
 #   9. RandomErasing (post-ToTensor) — occlusion robustness, final background-dep. break.
 # --------------------------------------------------------------------------------------
-_random_bg = RandomBackground(bg_dir=BG_DIR, p=0.9)
+_random_bg = RandomBackground(bg_dir=BG_DIR, mask_dir=MASK_DIR, p=0.9)
 
 train_transform = transforms.Compose(
     [
@@ -402,13 +450,13 @@ def compute_class_weights(train_labels: list[int], num_classes: int = NUM_CLASSE
 # Datasets / DataLoaders.
 # --------------------------------------------------------------------------------------
 def _imagefolder(root: Path, transform) -> datasets.ImageFolder:
-    """Load an ``ImageFolder``, with a clear error if the data root is missing."""
+    """Load an ``ImageFolder`` with a path-preserving loader and a clear missing-data error."""
     if not Path(root).exists():
         raise FileNotFoundError(
             f"Dataset root not found at {root}. Place the PlantVillage folders there "
             f"(see CLAUDE.md §4)."
         )
-    return datasets.ImageFolder(str(root), transform=transform)
+    return datasets.ImageFolder(str(root), transform=transform, loader=_pil_loader)
 
 
 def get_datasets(

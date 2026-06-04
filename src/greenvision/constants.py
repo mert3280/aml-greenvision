@@ -42,6 +42,7 @@ ROOT: Path = Path(__file__).resolve().parents[2]
 
 DATA_ROOT: Path = ROOT / "data" / "Plant_leave_diseases_dataset_without_augmentation"
 BG_DIR: Path = ROOT / "data" / "backgrounds"  # landscape images for RandomBackground (FIX-06)
+MASK_DIR: Path = ROOT / "data" / "masks"       # BiRefNet precomputed leaf masks (FIX-06c)
 ARTIFACTS_DIR: Path = ROOT / "artifacts"
 MODELS_DIR: Path = ROOT / "models"
 REPORTS_DIR: Path = ARTIFACTS_DIR / "reports"

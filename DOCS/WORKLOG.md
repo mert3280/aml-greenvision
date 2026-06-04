@@ -12,6 +12,154 @@
 
 ---
 
+## 2026-06-04 — Low-confidence disclaimer in dashboard (UX)
+
+**What**
+- [dashboard/src/app/components/LowConfidencePrompt.jsx](../dashboard/src/app/components/LowConfidencePrompt.jsx) —
+  added an amber disclaimer banner between the top-3 guess list and the "Try Another Photo"
+  button. The banner reads: *"Further research is required before acting. This prediction is
+  uncertain and should not be used as the sole basis for treatment or intervention decisions.
+  Consult an agronomist or plant pathologist to confirm any diagnosis."* Styled to match the
+  existing amber/gold low-confidence palette; includes a 🔬 icon.
+
+**Why**
+The `LowConfidencePrompt` component already handled the <50% confidence case but gave no
+explicit safety guidance. Users could see "model isn't sure" and still act on the top guess.
+The disclaimer makes the actionability constraint explicit.
+
+**Verified**
+- Code review only; requires `npm run dev` (dashboard) + `uvicorn app.main:app` to test live.
+  The component renders when `result.confidence < 0.50` (threshold in `PredictionPanel.jsx:7`).
+
+**Follow-ups**
+- Live UI test with a low-confidence image once both servers are running.
+
+---
+
+## 2026-06-03 — BiRefNet retrain (FIX-06c complete)
+
+**What**
+- Ran `scripts/precompute_masks.py --resume --batch-size 8` on RTX 4060 Laptop GPU.
+  Completed in 2h 11min. **55,373 masks computed, 75 skipped (resumed), 0 errors.**
+  Masks stored under `data/masks/` mirroring the dataset folder structure.
+- Fixed two issues found during the run:
+  1. Missing dependencies (`einops`, `kornia`, `timm`) — added to `requirements.txt`.
+  2. float32/float16 mismatch — resolved by using `torch.autocast(device_type="cuda")` in
+     `_process_batch`; throughput improved from ~1 img/s to ~8 img/s.
+- Spot-check confirmed: leaf cleanly isolated on outdoor landscape background, no gray remnant
+  (saved as `artifacts/bg_check.png`).
+- Retrained from scratch with BiRefNet masks active:
+  - Phase 1 (5 epochs, head only): best val acc **74.1%**
+  - Phase 2 (10 epochs, full fine-tune): best val acc **98.56%** at epoch 9
+  - Registered as `GreenVision v3 → Production` in MLflow.
+
+**Phase 2 results**
+
+| Epoch | Train Acc | Val Acc | Val Loss |
+|-------|-----------|---------|----------|
+| 1 | 66.4% | 92.9% | 1.004 |
+| 2 | 69.3% | 96.0% | 0.907 |
+| 3 | 69.6% | 97.2% | 0.851 |
+| 4 | 70.9% | 97.9% | 0.812 |
+| 5 | 68.7% | 98.3% | 0.800 |
+| 6 | 73.5% | 98.0% | 0.804 |
+| 7 | 73.7% | 98.1% | 0.799 |
+| 8 | 74.6% | 98.4% | 0.786 |
+| **9** | 69.7% | **98.56%** | **0.777** ← best |
+| 10 | 72.1% | 98.4% | 0.786 |
+
+**Why**
+BiRefNet masks replace the heuristic `_leaf_mask` (which silently failed on gray backgrounds).
+Training accuracy ~70% vs val ~98.6% is the augmentation working as intended — much harder
+training inputs force the model to learn disease texture rather than background shortcuts.
+Val accuracy 98.56% vs previous 98.93% is within noise; real-world confidence improvement
+requires manual field testing.
+
+**Verified**
+- `scripts/precompute_masks.py`: 0 errors, all 55,448 images masked.
+- Composite spot-check (`artifacts/bg_check.png`): leaf on beach landscape, no gray remnant.
+- Training completed without errors; checkpoint at `models/phase2_best.pt`.
+
+**Follow-ups**
+- Test real-world confidence with 3–5 phone photos of leaves on plants (the key metric).
+- Consider running `scripts/precompute_masks.py` with a higher-res model variant
+  (`ZhengPeng7/BiRefNet-matting`) if edge quality needs improvement.
+
+---
+
+## 2026-06-03 — BiRefNet background removal (FIX-06c)
+
+**What**
+- [src/greenvision/constants.py](../src/greenvision/constants.py) — added `MASK_DIR`
+  (`data/masks/`) for the BiRefNet mask cache.
+- [src/greenvision/data.py](../src/greenvision/data.py) — three changes:
+  1. `_pil_loader` — custom PIL loader that sets `img.filename` on the converted image
+     so transforms downstream can locate the corresponding mask file.
+  2. `RandomBackground.__init__` — added `mask_dir` parameter; `__call__` now tries
+     `_load_cached_mask` first and falls back to the heuristic `_leaf_mask` only when
+     no cached mask exists.
+  3. `_imagefolder` — passes `loader=_pil_loader` to `datasets.ImageFolder`.
+- [scripts/precompute_masks.py](../scripts/precompute_masks.py) — new one-time
+  preprocessing script. Loads `ZhengPeng7/BiRefNet` via HuggingFace `transformers`,
+  runs inference at 1024×1024 on every PlantVillage image, and saves grayscale PNG
+  masks under `data/masks/` mirroring the dataset folder structure. Supports `--resume`.
+- [requirements.txt](../requirements.txt) — added `transformers>=4.35.0`.
+- [dashboard/src/app/augmentation/page.js](../dashboard/src/app/augmentation/page.js) —
+  updated "Background Removal Strategy" section to describe the BiRefNet approach:
+  3-card highlights (neural segmentation / any background color / zero training overhead)
+  + 3-phase pipeline (offline precompute / runtime mask load / composite).
+
+**Why**
+The previous heuristic (`_leaf_mask` with white >200 / black <30 thresholds) failed on
+gray studio backgrounds — those pixels were classified as leaf and pasted intact over the
+landscape, defeating the augmentation. BiRefNet segments by learned object shape and
+handles white, black, and gray backgrounds equally, producing pixel-accurate leaf cutouts.
+Precomputing masks avoids any per-batch inference overhead during training.
+
+**Verified**
+Not yet — `precompute_masks.py` has not been run against the full dataset. `data.py`
+changes are backward-compatible: if `data/masks/` is empty, `_load_cached_mask` returns
+`None` and the heuristic runs as before. A smoke run (`python train.py --smoke`) should
+confirm no regressions before the precompute pass begins.
+
+**Follow-ups**
+- ~~Run `python scripts/precompute_masks.py --resume` on GPU to generate all 54k masks.~~ Done — see retrain entry below.
+- Real-world confidence test still needed: test with 3–5 phone photos of leaves on plants.
+
+---
+
+## 2026-06-03 — Augmentation Explorer dashboard (WS8 extension)
+
+**What**
+- [app/main.py](../app/main.py) — added `_build_augmentation_steps()` helper and
+  `POST /augment-preview` endpoint. Accepts an uploaded image, applies every training
+  and eval transform step-by-step (cumulatively), and returns base64-encoded PNG thumbnails
+  for each step. Runs CPU-bound work in a thread pool via `run_in_threadpool` so the
+  async event loop stays unblocked. Does not require the model checkpoint to be loaded.
+- [dashboard/src/app/augmentation/page.js](../dashboard/src/app/augmentation/page.js) —
+  new Next.js 15 route `/augmentation`. Two sections:
+  1. **Pipeline Overview** — static expandable step cards for both the 11-step training
+     pipeline and the 4-step inference pipeline, each showing parameters, purpose, and
+     the domain-gap rationale behind every transform.
+  2. **Try It Live** — upload any leaf image, POST to `/api/augment-preview`, and see an
+     image grid showing the cumulative result at every stage. Tab-switches between
+     Training and Inference views; "Regenerate" reruns the stochastic pipeline.
+- [dashboard/src/app/components/Header.jsx](../dashboard/src/app/components/Header.jsx) —
+  added a `<nav>` with "Predict" and "Augmentation" links so users can switch between pages.
+
+**Why**
+- Educational tooling to visualize how RandomBackground, ColorJitter, RandomErasing, etc.
+  change images during training vs. the deterministic Resize→CenterCrop→Normalize used at
+  inference time. Supports understanding and demo of the FIX-01/FIX-06 domain-shift work.
+
+**Verified**
+- Unverified (UI — requires `uvicorn app.main:app` + `npm run dev` in `dashboard/` to test live).
+
+**Follow-ups**
+- None.
+
+---
+
 ## 2026-06-03 — Retrain complete: FIX-06b + FIX-04 + AMP + bs=176 (GreenVision v2)
 
 **What**

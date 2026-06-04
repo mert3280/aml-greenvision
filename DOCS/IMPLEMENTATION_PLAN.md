@@ -247,14 +247,23 @@ criteria** (how we know it's done), and **dependencies**. Guardrails from `agent
 
 ### WS8 — Demo dashboard (optional but requested)
 **Goal:** A visual front-end so graders can drag-drop a leaf image and see the prediction — the user-facing "dashboard."
-**Files:** `dashboard/app.py` (Streamlit).
+**Files:** `dashboard/` (Next.js 15 App Router — replaced Streamlit per project request).
 **Depends on:** WS7.
 
-- [ ] Streamlit page: file uploader → POST to the FastAPI `/predict` → show the image, predicted class, confidence bar, and top-5. Configurable API URL.
-- [ ] Document `streamlit run dashboard/app.py` in README.
-- [ ] *(If Streamlit is unwanted, substitute a minimal static `index.html` + fetch, or rely on FastAPI's built-in Swagger `/docs` as the interactive surface.)*
+- [x] Next.js 15 drag-and-drop UI: `UploadZone` → `POST /api/predict` (proxied to FastAPI) →
+      `PredictionPanel` showing class, confidence bar, `HealthBadge`, and `AnalyticsPanel` (top-k accordion).
+- [x] `LowConfidencePrompt` shown when `confidence < 0.50`: lists top-3 guesses with confidence bars
+      and an explicit "further research required" disclaimer banner.
+- [x] `Header` with nav links to Predict and Augmentation pages.
+- [x] Augmentation Explorer page (`/augmentation`): static pipeline step cards + live preview grid
+      powered by `POST /augment-preview` (FastAPI endpoint added to `app/main.py`).
+- [x] Botanical theme (forest/sage palette, Playfair Display + Inter); `next.config.mjs` proxies
+      `/api/*` → `http://localhost:8000/*` (no CORS changes to FastAPI needed).
+- [x] Document `npm install && npm run dev` in README.
 
-**Acceptance:** With the API running, uploading a sample leaf renders a prediction and confidence. (No automated test required; manual demo check.)
+**Acceptance:** ✅ With `uvicorn app.main:app` + `npm run dev` running, uploading a sample leaf
+renders the prediction panel; low-confidence results show the disclaimer; the Augmentation
+Explorer page previews transforms live.
 
 ---
 

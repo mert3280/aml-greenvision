@@ -1,5 +1,9 @@
 data/Plant_leave_diseases_dataset_without_augmentation/
 data/backgrounds/
+data/masks/
+
+# Runtime logs (not project artifacts).
+logs/
 
 # Generated artifacts — track key outputs, ignore raw intermediate files.
 artifacts/*
